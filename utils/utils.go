@@ -1,11 +1,34 @@
 package utils
 
-import "fmt"
+import (
+	"bufio"
+	"fmt"
+	"net/http"
+)
 
 // Scheduler type that holds schduler specific information
 type Scheduler struct {
+	MesosMaster   string
 	SchedulerID   string
 	MesosStreamID string
+	MainConn      *http.Client
+	RecordIO      *bufio.Reader
+	EventBus      chan []byte
+}
+
+// SubscribeMessage comment
+type SubscribeMessage struct {
+	Type      string    `json:"type"`
+	Subscribe subscribe `json:"subscribe"`
+}
+
+type subscribe struct {
+	FrameworkInfo frameworkInfo `json:"framework_info"`
+}
+
+type frameworkInfo struct {
+	User string `json:"user"`
+	Name string `json:"name"`
 }
 
 // SchedulerEvent comment
@@ -63,8 +86,8 @@ type resource struct {
 	Name   string  `json:"name"`
 	Role   string  `json:"role"`
 	Type   string  `json:"type"`
-	Scalar scalar  `json:"scalar"`
-	Ranges rangess `json:"ranges"`
+	Scalar scalar  `json:"scalar,omitempty"`
+	Ranges rangess `json:"ranges,omitempty"`
 }
 
 type scalar struct {
@@ -76,8 +99,8 @@ type rangess struct {
 }
 
 type ranges struct {
-	Begin int `json:"begin"`
-	End   int `json:"end"`
+	Begin float64 `json:"begin"`
+	End   float64 `json:"end"`
 }
 
 // DeclineOffer struct to send to master when declining offer

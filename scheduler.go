@@ -29,12 +29,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 
-	"github.com/tpolekhin/mesos-1.0.0-http-scheduler/utils"
+	"github.com/tymofii-polekhin/megos-framework/utils"
 )
 
 //func Scheduler()
@@ -46,44 +45,59 @@ import (
 //func Heartbeat()
 
 // Scheduler info
-var Scheduler utils.Scheduler
 
 // EventHandler will distribute events to corresponding func
-func EventHandler(event chan []byte) {
+func EventHandler(s utils.Scheduler) {
 	for {
-		e := <-event
+		e := <-s.EventBus
+		//log.Println("EventHandler received an event:")
+		//log.Println(string(e))
 		var j utils.SchedulerEvent
 		err := json.Unmarshal(e, &j)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(j.Type)
+
+		//log.Println(j.Type)
+
 		switch {
+
 		case j.Type == "SUBSCRIBED":
-			Scheduler.SchedulerID = j.Subscribed.FrameworkID.Value
-			fmt.Println(j.Subscribed.FrameworkID.Value)
-			fmt.Println(j.Subscribed.HeartbeatIntervalSeconds)
+			log.Println("Subscribed to master at", s.MesosMaster,
+				"with framework ID", j.Subscribed.FrameworkID.Value,
+				"and heartbeat interval", j.Subscribed.HeartbeatIntervalSeconds, "seconds")
+
 		case j.Type == "OFFERS":
+			log.Println("Received offers from:")
+			// Ranging through offers from multiple agents
 			for _, o := range j.Offers.Offers {
-				fmt.Println(o.AgentID.Value)
-				fmt.Println(o.FrameworkID.Value)
-				fmt.Println(o.Hostname)
+				log.Println("\tAgent", o.AgentID.Value, "on host", o.Hostname, "with:")
+				// Ranging throgh multiple resources from single agent
 				for _, r := range o.Resources {
-					fmt.Println(r.Name)
+					if r.Type == "SCALAR" {
+						log.Println("\t\t", r.Name, r.Scalar.Value)
+					}
+					if r.Type == "RANGES" {
+						for _, p := range r.Ranges.Range {
+							log.Println("\t\t", r.Name, p.Begin, "-", p.End)
+						}
+					}
 				}
 			}
+
 		case j.Type == "HEARTBEAT":
-			fmt.Println("Heartbeat received from master.")
+			log.Println("Heartbeat received")
+
 		}
 	}
 }
 
 // SchedulerOfferProcess process offers from cluster
 func SchedulerOfferProcess(o utils.SchedulerEvent) {
-	fmt.Println("SchedulerOfferProcess: received offer")
+	log.Println("SchedulerOfferProcess: received offer")
 
 	for _, o := range o.Offers.Offers {
-		fmt.Println("Processing DECLINE for offer ", o.ID.Value)
+		log.Println("Processing DECLINE for offer ", o.ID.Value)
 		SchedulerOfferDecline(o.ID.Value)
 	}
 
@@ -92,85 +106,103 @@ func SchedulerOfferProcess(o utils.SchedulerEvent) {
 // SchedulerOfferDecline declining one offer
 func SchedulerOfferDecline(offerID string) {
 
-	body := bufio.Reader
-
-	req, err := http.NewRequest("POST", "http://localhost:5050/api/v1/scheduler")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	req.Header.Set("Host", "localhost:5050")
-	req.Header.Set("Content-type", "application/json")
-	req.Header.Set("Mesos-Stream-Id", Scheduler.MesosStreamID)
-
 }
 
-func main() {
+// Subscribe func
+func Subscribe(s utils.Scheduler) {
 
-	events := make(chan []byte)
-	go EventHandler(events)
+	var message utils.SubscribeMessage
+	message.Type = "SUBSCRIBE"
+	message.Subscribe.FrameworkInfo.Name = "Go Sample Framework"
+	message.Subscribe.FrameworkInfo.User = "root"
 
-	url := "http://localhost:5050/api/v1/scheduler"
-	//fmt.Println("URL:> ", url)
+	url := "http://" + s.MesosMaster + "/api/v1/scheduler"
+	//log.Println("Subscribe: url:", url)
 
-	// Create a custom transport with keep-alive enabled
-	tr := &http.Transport{DisableKeepAlives: false}
+	jreq, err := json.Marshal(message)
+	body := bytes.NewBuffer(jreq)
+	//log.Println("Subscribe: body:", body)
 
-	// Create client using custom keep-alive transport
-	client := &http.Client{Transport: tr}
-
-	// form a post message
-	var jsonStr = []byte(`{"type":"SUBSCRIBE","subscribe":{"framework_info":{"user":"root","name":"GOlang HTTP Framework"}}}`)
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
+	// Forming http POST request to subscribe
+	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// adding headers
+	// Adding headers
 	req.Header.Set("Host", "localhost:5050")
 	req.Header.Set("Content-type", "application/json")
 	req.Header.Set("Connection", "keep-alive")
 
-	//fmt.Println("req:> ", req)
-
-	// Do a POST request with SUBSCRIBE message and wait for responce
-	resp, err := client.Do(req)
+	// Do a POST request with SUBSCRIBE message
+	response, err := s.MainConn.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	reader := bufio.NewReader(resp.Body)
-	Scheduler.MesosStreamID = resp.Header.Get("Mesos-Stream-Id")
-	for {
+	// Reading never-ending stream from Mesos master
+	s.MesosStreamID = response.Header.Get("Mesos-Stream-Id")
 
-		line, err := reader.ReadString('\n')
+	//log.Println("response.ContentLength:", response.ContentLength)
+	//log.Println("response.Status:", response.Status)
+	//log.Println("scheduler.MesosStreamID: ", s.MesosStreamID)
+
+	go EventHandler(s)
+
+	s.RecordIO = bufio.NewReader(response.Body)
+
+	go RecordIOParse(s)
+
+	for {
+		// if the func exit connection will drop :(
+	}
+}
+
+// RecordIOParse function populates clean messages to EventBus
+func RecordIOParse(s utils.Scheduler) {
+	for {
+		line, err := s.RecordIO.ReadString('\n')
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
-		//fmt.Println("RecordIO Message Size:>", line[:len(line)-1])
 
 		i, err := strconv.ParseInt(line[:len(line)-1], 10, 0)
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
-		//fmt.Println("strconv.ParseInt:>", i)
 
 		msg := make([]byte, i)
-		n, err := reader.Read(msg)
+		n, err := s.RecordIO.Read(msg)
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 		if n > 0 {
-			events <- msg
+			s.EventBus <- msg
 		}
-
-		//fmt.Println("Bytes read:>", n)
-		//message := string(msg)
-		//fmt.Println("String read:>", message)
-		//fmt.Println("Sending message to channel...")
-		//events <- message
-
 	} // for loop
+}
+
+func main() {
+
+	var scheduler utils.Scheduler
+
+	scheduler.MesosMaster = "localhost:5050"
+	tr := &http.Transport{DisableKeepAlives: false}
+	scheduler.MainConn = &http.Client{Transport: tr}
+	scheduler.EventBus = make(chan []byte)
+
+	//log.Println("main: go Subscribe")
+	go Subscribe(scheduler)
+
+	// log.Println("main: go EventHandler")
+	// go EventHandler(scheduler)
+	//
+	// log.Println("main: go RecordIOParse")
+	// go RecordIOParse(scheduler)
+
+	//forever loop
+	for {
+
+	}
 
 }
