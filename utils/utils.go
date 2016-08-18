@@ -12,8 +12,10 @@ type Scheduler struct {
 	SchedulerID   string
 	MesosStreamID string
 	MainConn      *http.Client
+	Response      *http.Response
 	RecordIO      *bufio.Reader
 	EventBus      chan []byte
+	Offers        []offer
 }
 
 // SubscribeMessage comment
@@ -95,12 +97,12 @@ type scalar struct {
 }
 
 type rangess struct {
-	Range []ranges `json:"ranges"`
+	Range []ranges `json:"range"`
 }
 
 type ranges struct {
-	Begin float64 `json:"begin"`
-	End   float64 `json:"end"`
+	Begin int `json:"begin"`
+	End   int `json:"end"`
 }
 
 // DeclineOffer struct to send to master when declining offer
@@ -111,7 +113,7 @@ type DeclineOffer struct {
 }
 
 type decline struct {
-	OfferIDs []value `json:"offer_ids"`
+	OfferIDs []Value `json:"offer_ids"`
 	Filters  filters `json:"filters"`
 }
 
@@ -120,6 +122,10 @@ type filters struct {
 }
 
 type value struct {
+	Value string `json:"value"`
+}
+
+type Value struct {
 	Value string `json:"value"`
 }
 

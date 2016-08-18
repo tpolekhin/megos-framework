@@ -47,7 +47,7 @@ import (
 // Scheduler info
 
 // EventHandler will distribute events to corresponding func
-func EventHandler(s utils.Scheduler) {
+func EventHandler(s *utils.Scheduler) {
 	for {
 		e := <-s.EventBus
 		//log.Println("EventHandler received an event:")
@@ -59,7 +59,6 @@ func EventHandler(s utils.Scheduler) {
 		}
 
 		//log.Println(j.Type)
-
 		switch {
 
 		case j.Type == "SUBSCRIBED":
@@ -68,10 +67,11 @@ func EventHandler(s utils.Scheduler) {
 				"and heartbeat interval", j.Subscribed.HeartbeatIntervalSeconds, "seconds")
 
 		case j.Type == "OFFERS":
-			log.Println("Received offers from:")
 			// Ranging through offers from multiple agents
 			for _, o := range j.Offers.Offers {
+				log.Println("\tReceived offer", o.ID.Value)
 				log.Println("\tAgent", o.AgentID.Value, "on host", o.Hostname, "with:")
+				s.Offers = append(s.Offers, o)
 				// Ranging throgh multiple resources from single agent
 				for _, r := range o.Resources {
 					if r.Type == "SCALAR" {
@@ -84,6 +84,7 @@ func EventHandler(s utils.Scheduler) {
 					}
 				}
 			}
+			SchedulerOfferProcess(s)
 
 		case j.Type == "HEARTBEAT":
 			log.Println("Heartbeat received")
@@ -93,23 +94,57 @@ func EventHandler(s utils.Scheduler) {
 }
 
 // SchedulerOfferProcess process offers from cluster
-func SchedulerOfferProcess(o utils.SchedulerEvent) {
+func SchedulerOfferProcess(s *utils.Scheduler) {
 	log.Println("SchedulerOfferProcess: received offer")
 
-	for _, o := range o.Offers.Offers {
-		log.Println("Processing DECLINE for offer ", o.ID.Value)
-		SchedulerOfferDecline(o.ID.Value)
+	for _, o := range s.Offers {
+		log.Println("Processing DECLINE for offer", o.ID.Value)
+		SchedulerOfferDecline(o.ID.Value, o.FrameworkID.Value, s.MesosStreamID)
+
 	}
 
 }
 
 // SchedulerOfferDecline declining one offer
-func SchedulerOfferDecline(offerID string) {
+func SchedulerOfferDecline(offerID string, frameworkID string, mesosSreamId string) {
+
+	var value utils.Value
+	value.Value = offerID
+
+	var message utils.DeclineOffer
+	message.Type = "DECLINE"
+	message.FrameworkID.Value = frameworkID
+	message.Decline.Filters.RefuseSeconds = 5.0
+	message.Decline.OfferIDs = append(message.Decline.OfferIDs, value)
+
+	url := "http://localhost:5050/api/v1/scheduler"
+	//log.Println("Subscribe: url:", url)
+
+	jreq, err := json.Marshal(message)
+	body := bytes.NewBuffer(jreq)
+	//log.Println("Subscribe: body:", body)
+
+	// Forming http POST request to subscribe
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Adding headers
+	req.Header.Set("Host", "localhost:5050")
+	req.Header.Set("Content-type", "application/json")
+	req.Header.Set("Mesos-Stream-Id", mesosSreamId)
+
+	var client = &http.Client{}
+	responce, err := client.Do(req)
+	defer responce.Body.Close()
+
+	log.Println("Responce from Master:", responce.Status)
 
 }
 
 // Subscribe func
-func Subscribe(s utils.Scheduler) {
+func Subscribe(s *utils.Scheduler) {
 
 	var message utils.SubscribeMessage
 	message.Type = "SUBSCRIBE"
@@ -135,31 +170,18 @@ func Subscribe(s utils.Scheduler) {
 	req.Header.Set("Connection", "keep-alive")
 
 	// Do a POST request with SUBSCRIBE message
-	response, err := s.MainConn.Do(req)
+	s.Response, err = s.MainConn.Do(req)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Reading never-ending stream from Mesos master
-	s.MesosStreamID = response.Header.Get("Mesos-Stream-Id")
-
-	//log.Println("response.ContentLength:", response.ContentLength)
-	//log.Println("response.Status:", response.Status)
-	//log.Println("scheduler.MesosStreamID: ", s.MesosStreamID)
-
-	go EventHandler(s)
-
-	s.RecordIO = bufio.NewReader(response.Body)
-
-	go RecordIOParse(s)
-
-	for {
-		// if the func exit connection will drop :(
-	}
+	s.MesosStreamID = s.Response.Header.Get("Mesos-Stream-Id")
+	s.RecordIO = bufio.NewReader(s.Response.Body)
 }
 
 // RecordIOParse function populates clean messages to EventBus
-func RecordIOParse(s utils.Scheduler) {
+func RecordIOParse(s *utils.Scheduler) {
 	for {
 		line, err := s.RecordIO.ReadString('\n')
 		if err != nil {
@@ -191,18 +213,16 @@ func main() {
 	scheduler.MainConn = &http.Client{Transport: tr}
 	scheduler.EventBus = make(chan []byte)
 
-	//log.Println("main: go Subscribe")
-	go Subscribe(scheduler)
+	//log.Println("main: Subscribe")
+	Subscribe(&scheduler)
 
 	// log.Println("main: go EventHandler")
-	// go EventHandler(scheduler)
+	go EventHandler(&scheduler)
 	//
 	// log.Println("main: go RecordIOParse")
-	// go RecordIOParse(scheduler)
+	go RecordIOParse(&scheduler)
 
 	//forever loop
 	for {
-
 	}
-
 }
