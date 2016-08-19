@@ -12,6 +12,29 @@ import (
 	"github.com/tymofii-polekhin/megos-framework/utils"
 )
 
+// Messaging: Scheduler -> Master
+// SUBSCRIBE
+// TEARDOWN
+// ACCEPT
+// DECLINE
+// REVIVE
+// KILL
+// SHUTDOWN
+// ACKNOWLEDGE
+// RECONCILE
+// MESSAGE
+// REQUEST
+//
+// Events: Master -> Scheduler
+// SUBSCRIBED
+// OFFERS
+// RESCIND
+// UPDATE
+// MESSAGE
+// FAILURE
+// ERROR
+// HEARTBEAT
+
 // Scheduler struct that hold all info
 type Scheduler struct {
 	Master                   string
