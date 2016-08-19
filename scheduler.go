@@ -100,13 +100,14 @@ func SchedulerOfferProcess(s *utils.Scheduler) {
 	for _, o := range s.Offers {
 		log.Println("Processing DECLINE for offer", o.ID.Value)
 		SchedulerOfferDecline(o.ID.Value, o.FrameworkID.Value, s.MesosStreamID)
-
+		// need to delete offer from Scheduler.Offers
+		s.Offers = s.Offers[1:]
 	}
 
 }
 
 // SchedulerOfferDecline declining one offer
-func SchedulerOfferDecline(offerID string, frameworkID string, mesosSreamId string) {
+func SchedulerOfferDecline(offerID string, frameworkID string, mesosSreamID string) {
 
 	var value utils.Value
 	value.Value = offerID
@@ -133,10 +134,13 @@ func SchedulerOfferDecline(offerID string, frameworkID string, mesosSreamId stri
 	// Adding headers
 	req.Header.Set("Host", "localhost:5050")
 	req.Header.Set("Content-type", "application/json")
-	req.Header.Set("Mesos-Stream-Id", mesosSreamId)
+	req.Header.Set("Mesos-Stream-Id", mesosSreamID)
 
 	var client = &http.Client{}
 	responce, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer responce.Body.Close()
 
 	log.Println("Responce from Master:", responce.Status)

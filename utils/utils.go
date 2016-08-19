@@ -15,7 +15,7 @@ type Scheduler struct {
 	Response      *http.Response
 	RecordIO      *bufio.Reader
 	EventBus      chan []byte
-	Offers        []offer
+	Offers        []Offer
 }
 
 // SubscribeMessage comment
@@ -52,10 +52,11 @@ type frameworkID struct {
 }
 
 type offers struct {
-	Offers []offer `json:"offers"`
+	Offers []Offer `json:"offers"`
 }
 
-type offer struct {
+// Offer struct
+type Offer struct {
 	AgentID     agentID     `json:"agent_id"`
 	FrameworkID frameworkID `json:"framework_id"`
 	Hostname    string      `json:"hostname"`
@@ -125,6 +126,7 @@ type value struct {
 	Value string `json:"value"`
 }
 
+// Value struct
 type Value struct {
 	Value string `json:"value"`
 }
