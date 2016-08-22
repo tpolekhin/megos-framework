@@ -50,6 +50,10 @@ type Scheduler struct {
 	RecordIO                 *bufio.Reader
 	EventBus                 chan []byte
 	Offers                   []utils.Offer
+	NewOffers                chan utils.Offer
+	AcceptedOffers           chan utils.Accept
+	TasksLaunched            int
+	TasksTotal               int
 }
 
 // Subscribe will establish a connection to Mesos master
@@ -102,6 +106,8 @@ func (s *Scheduler) Subscribe(master string, name string, user string) (err erro
 	s.FrameworkUser = user
 	s.FrameworkName = name
 	s.EventBus = make(chan []byte)
+	s.NewOffers = make(chan utils.Offer, 10)
+	s.AcceptedOffers = make(chan utils.Accept)
 
 	return nil
 }
@@ -148,8 +154,8 @@ func (s *Scheduler) EventHandler() (err error) {
 		// read next event from EventBus
 		e := <-s.EventBus
 
-		//log.Println("EventHandler received an event:")
-		//log.Println(string(e))
+		log.Println("EventHandler received an event:")
+		log.Println(string(e))
 
 		// create SchedulerEvent structure
 		var j utils.SchedulerEvent
@@ -173,22 +179,22 @@ func (s *Scheduler) EventHandler() (err error) {
 		case j.Type == "OFFERS": // incomig resource offers
 			// Ranging through offers from multiple agents
 			for _, o := range j.Offers.Offers {
-				log.Println("\tReceived offer", o.ID.Value)
-				log.Println("\tAgent", o.AgentID.Value, "on host", o.Hostname, "with:")
-				s.Offers = append(s.Offers, o)
-				// Ranging throgh multiple resources from single agent
-				for _, r := range o.Resources {
-					if r.Type == "SCALAR" {
-						log.Println("\t\t", r.Name, r.Scalar.Value)
-					}
-					if r.Type == "RANGES" {
-						for _, p := range r.Ranges.Range {
-							log.Println("\t\t", r.Name, p.Begin, "-", p.End)
-						}
-					}
-				}
+				s.NewOffers <- o
+				// log.Println("\tReceived offer", o.ID.Value)
+				// log.Println("\tAgent", o.AgentID.Value, "on host", o.Hostname, "with:")
+				// s.Offers = append(s.Offers, o)
+				// // Ranging throgh multiple resources from single agent
+				// for _, r := range o.Resources {
+				// 	if r.Type == "SCALAR" {
+				// 		log.Println("\t\t", r.Name, r.Scalar.Value)
+				// 	}
+				// 	if r.Type == "RANGES" {
+				// 		for _, p := range r.Ranges.Range {
+				// 			log.Println("\t\t", r.Name, p.Begin, "-", p.End)
+				// 		}
+				// 	}
+				// }
 			}
-			s.SchedulerOfferProcess()
 
 		case j.Type == "HEARTBEAT": // master heartbeat event
 			log.Println("Heartbeat received")
@@ -203,7 +209,7 @@ func (s *Scheduler) SchedulerOfferProcess() (err error) {
 
 	for _, o := range s.Offers {
 		log.Println("Processing DECLINE for offer", o.ID.Value)
-		e := s.DeclineOffer(o.ID.Value)
+		_, e := s.DeclineOffer(o.ID.Value)
 		if err != nil {
 			return e
 		}
@@ -215,7 +221,7 @@ func (s *Scheduler) SchedulerOfferProcess() (err error) {
 }
 
 // DeclineOffer declining one offer
-func (s *Scheduler) DeclineOffer(offerID string) (err error) {
+func (s *Scheduler) DeclineOffer(offerID string) (response string, err error) {
 
 	var value utils.Value
 	value.Value = offerID
@@ -230,14 +236,14 @@ func (s *Scheduler) DeclineOffer(offerID string) (err error) {
 
 	jreq, e := json.Marshal(message)
 	if e != nil {
-		return e
+		return "", e
 	}
 	body := bytes.NewBuffer(jreq)
 
 	// Forming http POST request to subscribe
 	req, e := http.NewRequest("POST", url, body)
 	if e != nil {
-		return e
+		return "", e
 	}
 
 	// Adding headers
@@ -246,15 +252,53 @@ func (s *Scheduler) DeclineOffer(offerID string) (err error) {
 	req.Header.Set("Mesos-Stream-Id", s.MesosStreamID)
 
 	client := new(http.Client)
-	responce, e := client.Do(req)
+	res, e := client.Do(req)
 	if e != nil {
-		return e
+		return "", e
 	}
-	defer responce.Body.Close()
+	defer res.Body.Close()
 
-	log.Println("Responce from Master:", responce.Status)
-	if responce.StatusCode != http.StatusAccepted {
-		return fmt.Errorf(responce.Status)
+	//log.Println("Responce from Master:", res.Status)
+	if res.StatusCode != http.StatusAccepted {
+		return "", fmt.Errorf(res.Status)
 	}
-	return nil
+	return res.Status, nil
+}
+
+// AcceptOffer ddfdsffd
+func (s *Scheduler) AcceptOffer(a utils.Accept) (response string, err error) {
+
+	log.Println("Sending accept: ", a)
+
+	url := "http://" + s.Master + "/api/v1/scheduler"
+
+	jreq, e := json.Marshal(a)
+	if e != nil {
+		return "", e
+	}
+	body := bytes.NewBuffer(jreq)
+
+	// Forming http POST request to subscribe
+	req, e := http.NewRequest("POST", url, body)
+	if e != nil {
+		return "", e
+	}
+
+	// Adding headers
+	req.Header.Set("Host", "localhost:5050")
+	req.Header.Set("Content-type", "application/json")
+	req.Header.Set("Mesos-Stream-Id", s.MesosStreamID)
+
+	client := new(http.Client)
+	res, e := client.Do(req)
+	if e != nil {
+		return "", e
+	}
+	defer res.Body.Close()
+
+	//log.Println("Responce from Master:", res.Status)
+	if res.StatusCode != http.StatusAccepted {
+		return "", fmt.Errorf(res.Status)
+	}
+	return res.Status, nil
 }

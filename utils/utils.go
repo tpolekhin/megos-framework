@@ -57,11 +57,11 @@ type offers struct {
 
 // Offer struct
 type Offer struct {
-	AgentID     agentID     `json:"agent_id"`
+	AgentID     Value       `json:"agent_id"`
 	FrameworkID frameworkID `json:"framework_id"`
 	Hostname    string      `json:"hostname"`
-	ID          id          `json:"id"`
-	Resources   []resource  `json:"resources,omitempty"`
+	ID          Value       `json:"id"`
+	Resources   []Resource  `json:"resources,omitempty"`
 	URL         url         `json:"url,omitempty"`
 }
 
@@ -85,16 +85,16 @@ type address struct {
 	Port     int    `json:"port"`
 }
 
-type resource struct {
-	Name   string  `json:"name"`
-	Role   string  `json:"role"`
-	Type   string  `json:"type"`
-	Scalar scalar  `json:"scalar,omitempty"`
-	Ranges rangess `json:"ranges,omitempty"`
+type Resource struct {
+	Name   string   `json:"name"`
+	Role   string   `json:"role"`
+	Type   string   `json:"type"`
+	Scalar *Scalar  `json:"scalar,omitempty"`
+	Ranges *rangess `json:"ranges,omitempty"`
 }
 
-type scalar struct {
-	Value float32 `json:"value"`
+type Scalar struct {
+	Value float64 `json:"value"`
 }
 
 type rangess struct {
@@ -122,12 +122,54 @@ type filters struct {
 	RefuseSeconds float64 `json:"refuse_seconds"`
 }
 
-type value struct {
+// Value struct
+type Value struct {
 	Value string `json:"value"`
 }
 
-// Value struct
-type Value struct {
+///////////////////////////////////
+//
+//          OPERATIONS
+//
+///////////////////////////////////
+
+// Accept structure for accepting offer JSON responce
+type Accept struct {
+	Type        string      `json:"type"`
+	FrameworkID frameworkID `json:"framework_id"`
+	Accept      accept      `json:"accept"`
+}
+
+type accept struct {
+	OfferIDs   []Value     `json:"offer_ids"`
+	Operations []Operation `json:"operations"`
+	Filters    filters     `json:"filters"`
+}
+
+type Operation struct {
+	Type   string `json:"type"`
+	Launch launch `json:"launch"`
+}
+
+type launch struct {
+	TaskInfos []TaskInfo `json:"task_infos"`
+}
+
+type TaskInfo struct {
+	Name      string     `json:"name"`
+	TaskID    Value      `json:"task_id"`
+	AgentID   Value      `json:"agent_id"`
+	Executor  executor   `json:"executor"`
+	Resources []Resource `json:"resources"`
+}
+
+type executor struct {
+	ExecutorID Value   `json:"executor_id"`
+	Command    command `json:"command"`
+}
+
+type command struct {
+	Shell bool   `json:"shell"`
 	Value string `json:"value"`
 }
 
