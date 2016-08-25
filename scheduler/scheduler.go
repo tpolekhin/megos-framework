@@ -4,54 +4,30 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 
+	"github.com/tymofii-polekhin/megos-framework/executor"
 	"github.com/tymofii-polekhin/megos-framework/utils"
 )
-
-// Messaging: Scheduler -> Master
-// SUBSCRIBE
-// TEARDOWN
-// ACCEPT
-// DECLINE
-// REVIVE
-// KILL
-// SHUTDOWN
-// ACKNOWLEDGE
-// RECONCILE
-// MESSAGE
-// REQUEST
-//
-// Events: Master -> Scheduler
-// SUBSCRIBED
-// OFFERS
-// RESCIND
-// UPDATE
-// MESSAGE
-// FAILURE
-// ERROR
-// HEARTBEAT
 
 // Scheduler struct that hold all info
 type Scheduler struct {
 	Master                   string
-	FrameworkID              string
+	FrameworkID              utils.Value
 	FrameworkName            string
 	FrameworkUser            string
 	HeartbeatIntervalSeconds float64
 	SchedulerID              string
 	MesosStreamID            string
-	MainTransport            *http.Transport
-	MainConn                 *http.Client
+	Transport                *http.Transport
+	Client                   *http.Client
 	Response                 *http.Response
 	RecordIO                 *bufio.Reader
 	EventBus                 chan []byte
-	Offers                   []utils.Offer
-	NewOffers                chan utils.Offer
-	AcceptedOffers           chan utils.Accept
+	Events                   chan utils.Event
+	Calls                    chan utils.Call
 	TasksLaunched            int
 	TasksTotal               int
 }
@@ -60,24 +36,35 @@ type Scheduler struct {
 // and try to register a new framework
 func (s *Scheduler) Subscribe(master string, name string, user string) (err error) {
 
-	// Create a JSON structure for SUBSCRIBE event
-	var message utils.SubscribeMessage
-	message.Type = "SUBSCRIBE"
-	message.Subscribe.FrameworkInfo.Name = name
-	message.Subscribe.FrameworkInfo.User = user
+	// fill scheduler structure
+	s.Master = master
+	s.FrameworkUser = user
+	s.FrameworkName = name
 
-	url := "http://" + master + "/api/v1/scheduler"
+	// Create a JSON structure for SUBSCRIBE event
+	//log.Println("DEBUG: Create a JSON structure for SUBSCRIBE event")
+	call := new(utils.Call)
+	call.Type = "SUBSCRIBE"
+	call.Subscribe = new(utils.Subscribe)
+	call.Subscribe.FrameworkInfo.Name = s.FrameworkName
+	call.Subscribe.FrameworkInfo.User = s.FrameworkUser
+
+	url := "http://" + s.Master + "/api/v1/scheduler"
 
 	// Build a JSON string from struct
-	jreq, err := json.Marshal(message)
+	//log.Println("DEBUG: Build a JSON string from struct")
+	jreq, err := json.Marshal(call)
 	if err != nil {
 		return err
 	}
+	//log.Println("DEBUG: string(jreq):", string(jreq))
 
 	// Create POST body from JSON string
+	//log.Println("DEBUG: Create POST body from JSON string")
 	body := bytes.NewBuffer(jreq)
 
 	// Form an http POST request
+	//log.Println("DEBUG: Form an http POST request")
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		return err
@@ -89,26 +76,70 @@ func (s *Scheduler) Subscribe(master string, name string, user string) (err erro
 	req.Header.Set("Connection", "keep-alive")
 
 	// create transport with keep-alive
-	s.MainTransport = &http.Transport{DisableKeepAlives: false}
+	//log.Println("DEBUG: create transport with keep-alive")
+	s.Transport = &http.Transport{DisableKeepAlives: false}
 
 	// create new http client with keep-alive
-	s.MainConn = &http.Client{Transport: s.MainTransport}
+	//log.Println("DEBUG: create new http client with keep-alive")
+	s.Client = &http.Client{Transport: s.Transport}
 
 	// Do a POST request with SUBSCRIBE message
-	s.Response, err = s.MainConn.Do(req)
+	//log.Println("DEBUG: Do a POST request with SUBSCRIBE message")
+	s.Response, err = s.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	//log.Println("DEBUG: Response.ContentLength", s.Response.ContentLength)
+	//log.Println("DEBUG: Response.StatusCode", s.Response.StatusCode)
+	//log.Println("DEBUG: Response.Status", s.Response.Status)
+
+	s.MesosStreamID = s.Response.Header.Get("Mesos-Stream-Id")
+	s.RecordIO = bufio.NewReader(s.Response.Body)
+	s.EventBus = make(chan []byte)
+	s.Calls = make(chan utils.Call, 10)
+	s.Events = make(chan utils.Event, 10)
+
+	// run RecordIOParser in separate goroutine
+	//log.Println("DEBUG: run RecordIOParser in separate goroutine")
+	go s.RecordIOParser()
+
+	return nil
+}
+
+// Teardown all tasks, kill executors and unregister framework
+func (s *Scheduler) Teardown() (err error) {
+
+	call := new(utils.Call)
+	call.Type = "TEARDOWN"
+	call.FrameworkID = &s.FrameworkID
+
+	url := "http://" + s.Master + "/api/v1/scheduler"
+	err = call.Send(url, s.MesosStreamID)
 	if err != nil {
 		return err
 	}
 
-	s.MesosStreamID = s.Response.Header.Get("Mesos-Stream-Id")
-	s.RecordIO = bufio.NewReader(s.Response.Body)
-	s.Master = master
-	s.FrameworkUser = user
-	s.FrameworkName = name
-	s.EventBus = make(chan []byte)
-	s.NewOffers = make(chan utils.Offer, 10)
-	s.AcceptedOffers = make(chan utils.Accept)
+	// all clear
+	return nil
+}
 
+// Shutdown executor and kill all its tasks
+func (s *Scheduler) Shutdown(executor *executor.Executor) (err error) {
+
+	call := new(utils.Call)
+	call.Type = "SHUTDOWN"
+	call.Shutdown = new(utils.Shutdown)
+	call.FrameworkID = &s.FrameworkID
+	call.Shutdown.ExecutorID = executor.ExecutorID
+	call.Shutdown.AgentID = executor.AgentID
+
+	url := "http://" + s.Master + "/api/v1/scheduler"
+	err = call.Send(url, s.MesosStreamID)
+	if err != nil {
+		return err
+	}
+
+	// all clear
 	return nil
 }
 
@@ -118,187 +149,108 @@ func (s *Scheduler) RecordIOParser() (err error) {
 	for {
 
 		// reading RecordIO message length
+		//log.Println("DEBUG: reading RecordIO message length")
 		strRecordIOLength, err := s.RecordIO.ReadString('\n')
 		if err != nil {
 			return err
 		}
 
 		// converting string to integer (dropping '\n' symbol)
+		//log.Println("DEBUG: converting string to integer")
 		intRecordIOLength, err := strconv.ParseInt(strRecordIOLength[:len(strRecordIOLength)-1], 10, 0)
 		if err != nil {
 			return err
 		}
 
 		// creating buffer for RecordIO message
+		//log.Println("DEBUG: creating buffer for RecordIO message")
 		bRecordIOMessage := make([]byte, intRecordIOLength)
 
 		// reading message to RecordIO buffer
+		//log.Println("DEBUG: reading message to RecordIO buffer")
 		iBytesRead, err := s.RecordIO.Read(bRecordIOMessage)
 		if err != nil {
 			return err
 		}
 
-		// if message contains something - send it to EventBus
+		// if message contains something - send it to Events
 		if iBytesRead > 0 {
-			s.EventBus <- bRecordIOMessage
+			var event utils.Event
+			//log.Println("DEBUG: unmarshal bRecordIOMessage to utils.Event")
+			err := json.Unmarshal(bRecordIOMessage, &event)
+			if err != nil {
+				log.Fatalln("Failed to unmarshal RecordIO message:")
+				log.Fatalln(bRecordIOMessage)
+			} else {
+				//log.Println("DEBUG: send utils.Event to scheduler.Events channel")
+				s.Events <- event
+			}
 		}
 
 	} // for loop
 }
 
-// EventHandler will read messages from EventBus and
-// handle for further processing
-func (s *Scheduler) EventHandler() (err error) {
-	for {
+// Decline offer from mesos agent
+func (s *Scheduler) Decline(offerIDs []utils.Value, refuseSeconds float64) (err error) {
 
-		// read next event from EventBus
-		e := <-s.EventBus
+	log.Println("Declining offers", offerIDs)
 
-		log.Println("EventHandler received an event:")
-		log.Println(string(e))
-
-		// create SchedulerEvent structure
-		var j utils.SchedulerEvent
-
-		// try to parse event into JSON structure
-		err := json.Unmarshal(e, &j)
-		if err != nil {
-			return err
-		}
-
-		// choosing handler based on event type
-		switch {
-
-		case j.Type == "SUBSCRIBED": // master has accepted registration
-			s.FrameworkID = j.Subscribed.FrameworkID.Value
-			s.HeartbeatIntervalSeconds = j.Subscribed.HeartbeatIntervalSeconds
-			log.Println("Subscribed to master at", s.Master,
-				"with framework ID", j.Subscribed.FrameworkID.Value,
-				"and heartbeat interval", j.Subscribed.HeartbeatIntervalSeconds, "seconds")
-
-		case j.Type == "OFFERS": // incomig resource offers
-			// Ranging through offers from multiple agents
-			for _, o := range j.Offers.Offers {
-				s.NewOffers <- o
-				// log.Println("\tReceived offer", o.ID.Value)
-				// log.Println("\tAgent", o.AgentID.Value, "on host", o.Hostname, "with:")
-				// s.Offers = append(s.Offers, o)
-				// // Ranging throgh multiple resources from single agent
-				// for _, r := range o.Resources {
-				// 	if r.Type == "SCALAR" {
-				// 		log.Println("\t\t", r.Name, r.Scalar.Value)
-				// 	}
-				// 	if r.Type == "RANGES" {
-				// 		for _, p := range r.Ranges.Range {
-				// 			log.Println("\t\t", r.Name, p.Begin, "-", p.End)
-				// 		}
-				// 	}
-				// }
-			}
-
-		case j.Type == "HEARTBEAT": // master heartbeat event
-			log.Println("Heartbeat received")
-
-		}
-	}
-}
-
-// SchedulerOfferProcess process offers from cluster
-func (s *Scheduler) SchedulerOfferProcess() (err error) {
-	log.Println("SchedulerOfferProcess: received offer")
-
-	for _, o := range s.Offers {
-		log.Println("Processing DECLINE for offer", o.ID.Value)
-		_, e := s.DeclineOffer(o.ID.Value)
-		if err != nil {
-			return e
-		}
-		// need to delete offer from Scheduler.Offers
-		s.Offers = s.Offers[1:]
+	call := new(utils.Call)
+	call.Type = "DECLINE"
+	call.Decline = new(utils.Decline)
+	call.FrameworkID = &s.FrameworkID
+	call.Decline.Filters.RefuseSeconds = refuseSeconds
+	for _, offerID := range offerIDs {
+		call.Decline.OfferIDs = append(call.Decline.OfferIDs, offerID)
 	}
 
+	url := "http://" + s.Master + "/api/v1/scheduler"
+	err = call.Send(url, s.MesosStreamID)
+	if err != nil {
+		return err
+	}
+
+	// all clear
 	return nil
 }
 
-// DeclineOffer declining one offer
-func (s *Scheduler) DeclineOffer(offerID string) (response string, err error) {
+// Accept mesos offer and launch task
+func (s *Scheduler) Accept(accept *utils.Accept) (err error) {
 
-	var value utils.Value
-	value.Value = offerID
+	log.Println("Accepting offers", accept.OfferIDs)
 
-	var message utils.DeclineOffer
-	message.Type = "DECLINE"
-	message.FrameworkID.Value = s.FrameworkID
-	message.Decline.Filters.RefuseSeconds = 5.0
-	message.Decline.OfferIDs = append(message.Decline.OfferIDs, value)
+	call := new(utils.Call)
+	call.Type = "ACCEPT"
+	call.FrameworkID = &s.FrameworkID
+	call.Accept = accept
 
 	url := "http://" + s.Master + "/api/v1/scheduler"
-
-	jreq, e := json.Marshal(message)
-	if e != nil {
-		return "", e
-	}
-	body := bytes.NewBuffer(jreq)
-
-	// Forming http POST request to subscribe
-	req, e := http.NewRequest("POST", url, body)
-	if e != nil {
-		return "", e
+	err = call.Send(url, s.MesosStreamID)
+	if err != nil {
+		return err
 	}
 
-	// Adding headers
-	req.Header.Set("Host", "localhost:5050")
-	req.Header.Set("Content-type", "application/json")
-	req.Header.Set("Mesos-Stream-Id", s.MesosStreamID)
-
-	client := new(http.Client)
-	res, e := client.Do(req)
-	if e != nil {
-		return "", e
-	}
-	defer res.Body.Close()
-
-	//log.Println("Responce from Master:", res.Status)
-	if res.StatusCode != http.StatusAccepted {
-		return "", fmt.Errorf(res.Status)
-	}
-	return res.Status, nil
+	// all clear
+	return nil
 }
 
-// AcceptOffer ddfdsffd
-func (s *Scheduler) AcceptOffer(a utils.Accept) (response string, err error) {
+// Acknowledge mesos master event
+func (s *Scheduler) Acknowledge(event utils.Event) (err error) {
 
-	log.Println("Sending accept: ", a)
+	call := new(utils.Call)
+	call.Type = "ACKNOWLEDGE"
+	call.Acknowledge = new(utils.Acknowledge)
+	call.FrameworkID = &s.FrameworkID
+	call.Acknowledge.AgentID = event.Update.Status.AgentID
+	call.Acknowledge.TaskID = event.Update.Status.TaskID
+	call.Acknowledge.UUID = event.Update.Status.UUID
 
 	url := "http://" + s.Master + "/api/v1/scheduler"
-
-	jreq, e := json.Marshal(a)
-	if e != nil {
-		return "", e
-	}
-	body := bytes.NewBuffer(jreq)
-
-	// Forming http POST request to subscribe
-	req, e := http.NewRequest("POST", url, body)
-	if e != nil {
-		return "", e
+	err = call.Send(url, s.MesosStreamID)
+	if err != nil {
+		return err
 	}
 
-	// Adding headers
-	req.Header.Set("Host", "localhost:5050")
-	req.Header.Set("Content-type", "application/json")
-	req.Header.Set("Mesos-Stream-Id", s.MesosStreamID)
-
-	client := new(http.Client)
-	res, e := client.Do(req)
-	if e != nil {
-		return "", e
-	}
-	defer res.Body.Close()
-
-	//log.Println("Responce from Master:", res.Status)
-	if res.StatusCode != http.StatusAccepted {
-		return "", fmt.Errorf(res.Status)
-	}
-	return res.Status, nil
+	// all clear
+	return nil
 }

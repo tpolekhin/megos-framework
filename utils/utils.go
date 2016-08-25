@@ -1,124 +1,64 @@
 package utils
 
-import (
-	"bufio"
-	"fmt"
-	"net/http"
-)
+import "fmt"
 
-// Scheduler type that holds schduler specific information
-type Scheduler struct {
-	MesosMaster   string
-	SchedulerID   string
-	MesosStreamID string
-	MainConn      *http.Client
-	Response      *http.Response
-	RecordIO      *bufio.Reader
-	EventBus      chan []byte
-	Offers        []Offer
-}
-
-// SubscribeMessage comment
-type SubscribeMessage struct {
-	Type      string    `json:"type"`
-	Subscribe subscribe `json:"subscribe"`
-}
-
-type subscribe struct {
-	FrameworkInfo frameworkInfo `json:"framework_info"`
-}
-
-type frameworkInfo struct {
+// FrameworkInfo comment
+type FrameworkInfo struct {
 	User string `json:"user"`
 	Name string `json:"name"`
 }
 
-// SchedulerEvent comment
-type SchedulerEvent struct {
-	Type       string     `json:"type"`
-	Subscribed subscribed `json:"subscribed,omitempty"`
-	Offers     offers     `json:"offers,omitempty"`
-}
-
-// subscribed comment
-type subscribed struct {
-	HeartbeatIntervalSeconds float64     `json:"heartbeat_interval_seconds"`
-	FrameworkID              frameworkID `json:"framework_id"`
-}
-
-// framework_id comment
-type frameworkID struct {
-	Value string `json:"value"`
-}
-
-type offers struct {
-	Offers []Offer `json:"offers"`
-}
-
 // Offer struct
 type Offer struct {
-	AgentID     Value       `json:"agent_id"`
-	FrameworkID frameworkID `json:"framework_id"`
-	Hostname    string      `json:"hostname"`
-	ID          Value       `json:"id"`
-	Resources   []Resource  `json:"resources,omitempty"`
-	URL         url         `json:"url,omitempty"`
+	AgentID     Value      `json:"agent_id"`
+	FrameworkID Value      `json:"framework_id"`
+	Hostname    string     `json:"hostname"`
+	ID          Value      `json:"id"`
+	Resources   []Resource `json:"resources"`
+	URL         *URL       `json:"url,omitempty"`
 }
 
-type agentID struct {
-	Value string `json:"value"`
-}
-
-type id struct {
-	Value string `json:"value"`
-}
-
-type url struct {
-	Address address `json:"address"`
+// URL comment
+type URL struct {
+	Address Address `json:"address"`
 	Path    string  `json:"path"`
 	Scheme  string  `json:"scheme"`
 }
 
-type address struct {
+//Address comment
+type Address struct {
 	Hostname string `json:"hostname"`
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
 }
 
+// Resource comment
 type Resource struct {
-	Name   string   `json:"name"`
-	Role   string   `json:"role"`
-	Type   string   `json:"type"`
-	Scalar *Scalar  `json:"scalar,omitempty"`
-	Ranges *rangess `json:"ranges,omitempty"`
+	Name   string  `json:"name"`
+	Role   string  `json:"role"`
+	Type   string  `json:"type"`
+	Scalar *Scalar `json:"scalar,omitempty"`
+	Ranges *Ranges `json:"ranges,omitempty"`
 }
 
+// Scalar comment
 type Scalar struct {
 	Value float64 `json:"value"`
 }
 
-type rangess struct {
-	Range []ranges `json:"range"`
+// Ranges comment
+type Ranges struct {
+	Range []Range `json:"range"`
 }
 
-type ranges struct {
+// Range comment
+type Range struct {
 	Begin int `json:"begin"`
 	End   int `json:"end"`
 }
 
-// DeclineOffer struct to send to master when declining offer
-type DeclineOffer struct {
-	FrameworkID frameworkID `json:"framework_id"`
-	Type        string      `json:"type"`
-	Decline     decline     `json:"decline"`
-}
-
-type decline struct {
-	OfferIDs []Value `json:"offer_ids"`
-	Filters  filters `json:"filters"`
-}
-
-type filters struct {
+// Filters comment
+type Filters struct {
 	RefuseSeconds float64 `json:"refuse_seconds"`
 }
 
@@ -127,50 +67,77 @@ type Value struct {
 	Value string `json:"value"`
 }
 
-///////////////////////////////////
-//
-//          OPERATIONS
-//
-///////////////////////////////////
-
-// Accept structure for accepting offer JSON responce
-type Accept struct {
-	Type        string      `json:"type"`
-	FrameworkID frameworkID `json:"framework_id"`
-	Accept      accept      `json:"accept"`
-}
-
-type accept struct {
-	OfferIDs   []Value     `json:"offer_ids"`
-	Operations []Operation `json:"operations"`
-	Filters    filters     `json:"filters"`
-}
-
+// Operation comment
 type Operation struct {
 	Type   string `json:"type"`
-	Launch launch `json:"launch"`
+	Launch Launch `json:"launch"`
 }
 
-type launch struct {
+// Launch comment
+type Launch struct {
 	TaskInfos []TaskInfo `json:"task_infos"`
 }
 
+// TaskInfo comment
 type TaskInfo struct {
-	Name      string     `json:"name"`
-	TaskID    Value      `json:"task_id"`
-	AgentID   Value      `json:"agent_id"`
-	Executor  executor   `json:"executor"`
-	Resources []Resource `json:"resources"`
+	Name        string       `json:"name"`
+	TaskID      Value        `json:"task_id"`
+	AgentID     Value        `json:"agent_id"`
+	Command     *Command     `json:"command,omitempty"`
+	HealthCheck *HealthCheck `json:"health_check,omitempty"`
+	Executor    *Executor    `json:"executor,omitempty"`
+	Resources   []Resource   `json:"resources"`
 }
 
-type executor struct {
+// Executor comment
+type Executor struct {
 	ExecutorID Value   `json:"executor_id"`
-	Command    command `json:"command"`
+	Command    Command `json:"command"`
 }
 
-type command struct {
+// Command comment
+type Command struct {
 	Shell bool   `json:"shell"`
 	Value string `json:"value"`
+}
+
+// HealthCheck comment
+type HealthCheck struct {
+	Type                string  `json:"type"`
+	DelaySeconds        float64 `json:"delay_seconds"`
+	IntervalSeconds     float64 `json:"interval_seconds"`
+	TimeoutSeconds      float64 `json:"timeout_seconds"`
+	ConsecutiveFailures int     `json:"consecutive_failures"`
+	GracePeriodSeconds  float64 `json:"grace_period_seconds"`
+	Command             Command `json:"command"`
+}
+
+// Status comment
+type Status struct {
+	UUID            string          `json:"uuid"`
+	Timestamp       float64         `json:"timestamp"`
+	AgentID         Value           `json:"agent_id"`
+	ExecutorID      Value           `json:"executor_id"`
+	TaskID          Value           `json:"task_id"`
+	Source          string          `json:"source"`
+	State           string          `json:"state"`
+	ContainerStatus ContainerStatus `json:"container_status"`
+}
+
+// ContainerStatus comment
+type ContainerStatus struct {
+	ExecutorPID  int           `json:"executor_pid"`
+	NetworkInfos []IPAddresses `json:"network_infos"`
+}
+
+// IPAddresses comment
+type IPAddresses struct {
+	IPAddresses []IPAddress `json:"ip_addresses"`
+}
+
+// IPAddress comment
+type IPAddress struct {
+	IPAddress string `json:"ip_address"`
 }
 
 func jsonloop(i interface{}) {
