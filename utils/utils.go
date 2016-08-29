@@ -78,17 +78,6 @@ type Launch struct {
 	TaskInfos []TaskInfo `json:"task_infos"`
 }
 
-// TaskInfo comment
-type TaskInfo struct {
-	Name        string       `json:"name"`
-	TaskID      Value        `json:"task_id"`
-	AgentID     Value        `json:"agent_id"`
-	Command     *Command     `json:"command,omitempty"`
-	HealthCheck *HealthCheck `json:"health_check,omitempty"`
-	Executor    *Executor    `json:"executor,omitempty"`
-	Resources   []Resource   `json:"resources"`
-}
-
 // Executor comment
 type Executor struct {
 	ExecutorID Value   `json:"executor_id"`

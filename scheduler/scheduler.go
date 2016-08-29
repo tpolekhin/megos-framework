@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -14,22 +15,100 @@ import (
 
 // Scheduler struct that hold all info
 type Scheduler struct {
+
+	// General info
 	Master                   string
 	FrameworkID              utils.Value
 	FrameworkName            string
 	FrameworkUser            string
-	HeartbeatIntervalSeconds float64
-	SchedulerID              string
 	MesosStreamID            string
-	Transport                *http.Transport
-	Client                   *http.Client
-	Response                 *http.Response
-	RecordIO                 *bufio.Reader
-	EventBus                 chan []byte
-	Events                   chan utils.Event
-	Calls                    chan utils.Call
-	TasksLaunched            int
-	TasksTotal               int
+	HeartbeatIntervalSeconds float64
+
+	// HTTP communication
+	Transport *http.Transport
+	Client    *http.Client
+	Response  *http.Response
+	RecordIO  *bufio.Reader
+	EventBus  chan []byte
+
+	// Streams
+	Events chan utils.Event
+	Calls  chan utils.Call
+
+	// Tasks
+	Tasks         []utils.TaskInfo
+	LaunchedTasks []utils.TaskInfo
+}
+
+// AddTask for framework to launch
+func (s *Scheduler) AddTask(task utils.TaskInfo) (err error) {
+	s.Tasks = append(s.Tasks, task)
+	return nil
+}
+
+// AddTasks for framework to launch
+func (s *Scheduler) AddTasks(tasks []utils.TaskInfo) (err error) {
+	for _, task := range tasks {
+		s.AddTask(task)
+	}
+	return nil
+}
+
+// LaunchTask constructs Accept call for task
+func (s *Scheduler) LaunchTask(task *utils.TaskInfo, offer *utils.Offer) (err error) {
+
+	task.AgentID = offer.AgentID
+	task.TaskID.Value = offer.AgentID.Value + "." + task.Name
+
+	// Create new Accept call to master
+	accept := new(utils.Accept)
+
+	// Add offer ID to accept call
+	accept.OfferIDs = append(accept.OfferIDs, offer.ID)
+
+	// Refuse offers from this agent next 5 seconds
+	accept.Filters.RefuseSeconds = 5.0
+
+	// Add Operation for agent
+	accept.Operations = make([]utils.Operation, 1)
+
+	// Set type LAUNCH simple task
+	accept.Operations[0].Type = "LAUNCH"
+
+	// Add TaskInfo for the LAUNCH call
+	accept.Operations[0].Launch.TaskInfos = make([]utils.TaskInfo, 1)
+	accept.Operations[0].Launch.TaskInfos = append(accept.Operations[0].Launch.TaskInfos, *task)
+
+	err = s.Accept(accept)
+	if err != nil {
+		return err
+	}
+
+	// Add Task to LaunchedTasks
+	s.LaunchedTasks = append(s.LaunchedTasks, *task)
+	return nil
+}
+
+// LaunchTasks on set of offers with strategy: stack, spread
+func (s *Scheduler) LaunchTasks(tasks []utils.TaskInfo, offers []utils.Offer, strategy string) (err error) {
+	switch strategy {
+	case "stack": // stack as many tasks on one offer as we can
+		return fmt.Errorf("Spread strategy is not implemented yet! Please use 'stack'!")
+	case "spread": // evenly spread tasks across offers
+		return fmt.Errorf("Spread strategy is not implemented yet! Please use 'stack'!")
+	default:
+		return fmt.Errorf("Strategy should be 'stack' or 'spread'!")
+	}
+}
+
+// TaskIsLaunched checks for task status
+func (s *Scheduler) TaskIsLaunched(task *utils.TaskInfo) (launched bool) {
+	for _, t := range s.LaunchedTasks {
+		if task.TaskID == t.TaskID {
+			return true
+		}
+	}
+	return false
 }
 
 // Subscribe will establish a connection to Mesos master
@@ -191,18 +270,16 @@ func (s *Scheduler) RecordIOParser() (err error) {
 }
 
 // Decline offer from mesos agent
-func (s *Scheduler) Decline(offerIDs []utils.Value, refuseSeconds float64) (err error) {
+func (s *Scheduler) Decline(offer *utils.Offer, refuseSeconds float64) (err error) {
 
-	log.Println("Declining offers", offerIDs)
+	log.Println("Declining offer", offer.ID.Value)
 
 	call := new(utils.Call)
 	call.Type = "DECLINE"
 	call.Decline = new(utils.Decline)
 	call.FrameworkID = &s.FrameworkID
 	call.Decline.Filters.RefuseSeconds = refuseSeconds
-	for _, offerID := range offerIDs {
-		call.Decline.OfferIDs = append(call.Decline.OfferIDs, offerID)
-	}
+	call.Decline.OfferIDs = append(call.Decline.OfferIDs, offer.ID)
 
 	url := "http://" + s.Master + "/api/v1/scheduler"
 	err = call.Send(url, s.MesosStreamID)
